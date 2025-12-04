@@ -4,22 +4,39 @@ from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# 1. Load your token from environment variables (Safety first!)
+# 1. Load your token
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise ValueError("No TELEGRAM_TOKEN found in environment variables")
 
-# 2. Define your bot logic (The "Hello World" part)
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends a hello message when the command /start is issued."""
-    await update.message.reply_text("Hello World! I am running on Google Cloud Run.")
+# 2. Define your bot commands
 
-# 3. Setup the PTB Application (note: no run_polling here!)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a hello message."""
+    user_first_name = update.effective_user.first_name
+    await update.message.reply_text(f"Hello {user_first_name}! I am running on Google Cloud Run.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a formatted help message."""
+    # You can use HTML tags like <b>, <i>, <code>, <pre>
+    help_text = (
+        "<b>🤖 Bot Help Menu</b>\n\n"
+        "Here are the commands you can use:\n"
+        "/start - Wake me up and say hello\n"
+        "/help - Show this help message\n\n"
+        "<i>💡 Hint: You can edit this text in the 'help_command' function in main.py</i>"
+    )
+    # Note: parse_mode="HTML" is required for the tags to work
+    await update.message.reply_text(help_text, parse_mode="HTML")
+
+# 3. Setup the PTB Application
 ptb_application = Application.builder().token(TOKEN).build()
+
+# --- Register your handlers here ---
 ptb_application.add_handler(CommandHandler("start", start))
+ptb_application.add_handler(CommandHandler("help", help_command))
 
 # 4. FastAPI Setup with Lifecycle Management
-# This ensures the bot initializes correctly before receiving traffic
 async def lifespan(app: FastAPI):
     # Startup: Initialize the bot
     await ptb_application.initialize()
@@ -33,20 +50,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # 5. The Webhook Endpoint
-# Telegram sends updates here. We pass them to PTB.
 @app.post("/")
 async def telegram_webhook(request: Request):
-    # Get the data from the request
     data = await request.json()
-    # Convert it to a PTB Update object
     update = Update.de_json(data, ptb_application.bot)
-    # Process the update
     await ptb_application.process_update(update)
     return {"status": "ok"}
 
 # 6. Local Development Helper
 if __name__ == "__main__":
-    # Cloud Run sets the PORT env var automatically
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
-  
