@@ -13,13 +13,23 @@ from telegram.ext import (
 
 # 1. Load Secrets
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+ADMIN_ENV = os.getenv("ADMIN_ID")
+
 # Add your ID here. You can add multiple IDs (e.g., you and a friend)
 # ideally load this from env, but hardcoding is fine for personal bots
-ALLOWED_USER_IDS = [os.getenv("ADMIN_ID")]  # <--- REPLACE THIS WITH YOUR ID
 
 if not TOKEN:
     raise ValueError("No TELEGRAM_TOKEN found in environment variables")
 
+ALLOWED_USER_IDS = []
+if ADMIN_ENV:
+    try:
+        ALLOWED_USER_IDS = [int(ADMIN_ENV)]
+    except ValueError:
+        print("Error: ADMIN_ID is not a number!")
+else:
+    print("⚠️ WARNING: No ADMIN_ID set. Bot will block everyone!")
+    
 # --- KEYBOARDS (Same as before) ---
 def get_main_menu_keyboard():
     keyboard = [
