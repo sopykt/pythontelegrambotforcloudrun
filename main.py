@@ -15,7 +15,7 @@ from telegram.ext import (
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 # Add your ID here. You can add multiple IDs (e.g., you and a friend)
 # ideally load this from env, but hardcoding is fine for personal bots
-ALLOWED_USER_IDS = [123456789]  # <--- REPLACE THIS WITH YOUR ID
+ALLOWED_USER_IDS = [os.getenv("ADMIN_ID")]  # <--- REPLACE THIS WITH YOUR ID
 
 if not TOKEN:
     raise ValueError("No TELEGRAM_TOKEN found in environment variables")
