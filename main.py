@@ -1,5 +1,10 @@
 import os
 import uvicorn
+import asyncio
+import zipfile
+import shutil
+import google.auth # <--- NEW IMPORT
+from datetime import datetime
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -10,92 +15,139 @@ from telegram.ext import (
     TypeHandler,
     ApplicationHandlerStop
 )
+from googleapiclient.discovery import build
+
+# --- IMPORT LOGIC ---
+from logic import process_data
 
 # 1. Load Secrets
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ENV = os.getenv("ADMIN_ID")
-
-# Add your ID here. You can add multiple IDs (e.g., you and a friend)
-# ideally load this from env, but hardcoding is fine for personal bots
-
-if not TOKEN:
-    raise ValueError("No TELEGRAM_TOKEN found in environment variables")
-
 ALLOWED_USER_IDS = []
+
 if ADMIN_ENV:
     try:
         ALLOWED_USER_IDS = [int(ADMIN_ENV)]
     except ValueError:
-        print("Error: ADMIN_ID is not a number!")
-else:
-    print("⚠️ WARNING: No ADMIN_ID set. Bot will block everyone!")
+        print("Error: ADMIN_ID must be a number")
+
+# --- CONFIGURATION ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = '/tmp/uploads' # Still using tmp
+FONT_PATH = os.path.join(BASE_DIR, 'fonts', 'NotoSansMyanmar-Regular.ttf')
+WKHTML_PATH = '/usr/bin/wkhtmltoimage'
+
+# !!! REMOVED: SERVICE_ACCOUNT_FILE path !!! 
+TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# --- SECURE DRIVE DOWNLOADER ---
+def download_file_from_drive(output_path):
+    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
     
-# --- KEYBOARDS (Same as before) ---
+    # --- NEW AUTH METHOD ---
+    # This automatically grabs the credentials of the Cloud Run service account
+    creds, _ = google.auth.default(scopes=SCOPES)
+    
+    service = build('drive', 'v3', credentials=creds)
+    
+    # The rest is exactly the same
+    request = service.files().get_media(fileId=TARGET_FILE_ID)
+    with open(output_path, 'wb') as f:
+        f.write(request.execute())
+
+# --- KEYBOARDS ---
 def get_main_menu_keyboard():
     keyboard = [
-        [
-            InlineKeyboardButton("🚀 Tools", callback_data='menu_tools'),
-            InlineKeyboardButton("ℹ️ Help", callback_data='menu_help'),
-        ],
+        [InlineKeyboardButton("📊 Generate Reports", callback_data='menu_reports')],
+        [InlineKeyboardButton("ℹ️ Help", callback_data='menu_help')],
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_back_button():
-    keyboard = [[InlineKeyboardButton("🔙 Back", callback_data='menu_main')]]
+def get_report_menu():
+    keyboard = [
+        [InlineKeyboardButton("📅 Generate for Today", callback_data='action_gen_today')],
+        [InlineKeyboardButton("🔙 Back", callback_data='menu_main')]
+    ]
     return InlineKeyboardMarkup(keyboard)
 
-# --- SECURITY HANDLER (The "Bouncer") ---
+# --- SECURITY ---
 async def enforce_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Checks if the user is allowed. 
-    If not, stops processing completely.
-    """
-    user_id = update.effective_user.id
-    if user_id not in ALLOWED_USER_IDS:
-        print(f"⛔️ Unauthorized access attempt from User ID: {user_id}")
-        # Optional: Tell them to go away (or just stay silent to be stealthy)
-        # await update.message.reply_text("⛔️ Access Denied.")
-        
-        # This exception stops the update from reaching other handlers
-        raise ApplicationHandlerStop 
+    if not update.effective_user: return
+    if update.effective_user.id not in ALLOWED_USER_IDS:
+        raise ApplicationHandlerStop
 
-# --- COMMANDS ---
+# --- HEAVY TASK WRAPPER ---
+def generate_reports_sync(date_string):
+    if os.path.exists(UPLOAD_FOLDER):
+        shutil.rmtree(UPLOAD_FOLDER)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    
+    excel_path = os.path.join(UPLOAD_FOLDER, "drive_data.xlsx")
+    
+    # This now uses the secure auth
+    download_file_from_drive(excel_path)
+    
+    generated_files = process_data(excel_path, UPLOAD_FOLDER, date_string, FONT_PATH, WKHTML_PATH)
+    
+    zip_filename = f"Report_{date_string}.zip"
+    zip_path = os.path.join(UPLOAD_FOLDER, zip_filename)
+    
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for f in generated_files:
+            file_path = os.path.join(UPLOAD_FOLDER, f)
+            if os.path.exists(file_path):
+                zipf.write(file_path, arcname=f)
+                
+    return zip_path
+
+# --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Welcome, Admin! You are authorized.",
-        reply_markup=get_main_menu_keyboard()
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Only you can see this help menu.")
+    await update.message.reply_text("👋 Hello Boss! Ready to generate.", reply_markup=get_main_menu_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == 'menu_main':
+    await query.answer() 
+    
+    if query.data == 'menu_main':
         await query.edit_message_text("<b>🤖 Main Menu</b>", parse_mode='HTML', reply_markup=get_main_menu_keyboard())
-    elif data == 'menu_help':
-        await query.edit_message_text("<b>ℹ️ Secret Help</b>", parse_mode='HTML', reply_markup=get_back_button())
+    
+    elif query.data == 'menu_reports':
+        await query.edit_message_text("<b>📊 Report Generator</b>\nSelect option:", parse_mode='HTML', reply_markup=get_report_menu())
+
+    elif query.data == 'action_gen_today':
+        await query.edit_message_text("⏳ <b>Generating...</b>\n<i>Authenticating securely & Processing...</i>", parse_mode='HTML')
+        # today_str = datetime.now().strftime("%Y-%m-%d") # Format: 2023-10-27
+        today_str = datetime.now().strftime("၄-၁၂-၂၀၂၅")
+        
+        try:
+            zip_path = await asyncio.to_thread(generate_reports_sync, today_str)
+            
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=zip_path,
+                filename=os.path.basename(zip_path),
+                caption=f"✅ Reports for {today_str} generated!"
+            )
+            await query.message.reply_text("Done! What else?", reply_markup=get_main_menu_keyboard())
+            
+        except Exception as e:
+            # Helpful error message if permissions are wrong
+            error_msg = str(e)
+            if "403" in error_msg:
+                error_msg = "🚫 Access Denied! Did you share the Drive file with the Cloud Run email?"
+            await query.message.reply_text(f"❌ Error: {error_msg}")
 
 # --- APP SETUP ---
 ptb_application = Application.builder().token(TOKEN).build()
-
-# !!! CRITICAL: Add the "Bouncer" FIRST with a low group number (-1) !!!
-# This ensures it runs before any command or button handlers.
 ptb_application.add_handler(TypeHandler(Update, enforce_access), group=-1)
-
-# Register normal handlers
 ptb_application.add_handler(CommandHandler("start", start))
-ptb_application.add_handler(CommandHandler("help", help_command))
 ptb_application.add_handler(CallbackQueryHandler(button_handler))
 
-# --- FASTAPI SETUP ---
 async def lifespan(app: FastAPI):
     await ptb_application.initialize()
     await ptb_application.start()
-    print("Bot started...")
     yield
     await ptb_application.stop()
     await ptb_application.shutdown()
