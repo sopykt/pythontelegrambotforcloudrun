@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bullseye
 
 # 1. Install system dependencies for wkhtmltoimage and fonts
 RUN apt-get update && apt-get install -y \
