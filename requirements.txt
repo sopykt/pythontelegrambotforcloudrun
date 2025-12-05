@@ -9,4 +9,4 @@ pandas
 jinja2
 pdfkit
 imgkit
-xlswriter
+xlsxwriter
