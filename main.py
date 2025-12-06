@@ -3,8 +3,8 @@ import uvicorn
 import asyncio
 import zipfile
 import shutil
-import google.auth # <--- NEW IMPORT
-from datetime import datetime
+import google.auth 
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
