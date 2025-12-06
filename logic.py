@@ -68,13 +68,13 @@ def _gen_tatsin(df, output_folder, wanted_date_str, font_css, wkhtmltopdf_path, 
     table_df = build_custom_table(df_bydate)
 
     if 'e' in formats:
-        excel_name = f"တက်ဆင်းပြောင်း_{wanted_date_str}.xlsx"
+        excel_name = f"tatsin_{wanted_date_str}.xlsx"
         table_df.to_excel(os.path.join(output_folder, excel_name), index=False)
         files.append(excel_name)
 
     if 'p' in formats:
         html = f"<html><head><meta charset='utf-8'>{font_css}</head><body><h3>ဆေးရုံ တက်/ဆင်း/ပြောင်း {wanted_date_str}</h3>{table_df.to_html(index=False, border=0)}</body></html>"
-        img_name = f"တက်ဆင်းပြောင်း_{wanted_date_str}.png"
+        img_name = f"tatsin_{wanted_date_str}.png"
         generate_image_from_html(html, os.path.join(output_folder, img_name), wkhtmltopdf_path)
         files.append(img_name)
     
@@ -99,13 +99,13 @@ def _gen_sitchar(df, output_folder, wanted_date_str, font_css, wkhtmltopdf_path,
     pivot.columns.name = None
 
     if 'e' in formats:
-        excel_name = f"စစ်ခြား_{wanted_date_str}.xlsx"
+        excel_name = f"sitchar_{wanted_date_str}.xlsx"
         pivot.to_excel(os.path.join(output_folder, excel_name))
         files.append(excel_name)
 
     if 'p' in formats:
         html = f"<html><head><meta charset='utf-8'>{font_css}</head><body><h3>စစ်ဆင်ရေးဒဏ်ရာနှင့် အခြားရောဂါ အခြေပြဇယား {wanted_date_str}</h3>{pivot.to_html(border=0)}</body></html>"
-        img_name = f"စစ်ခြား_{wanted_date_str}.png"
+        img_name = f"sitchar_{wanted_date_str}.png"
         generate_image_from_html(html, os.path.join(output_folder, img_name), wkhtmltopdf_path)
         files.append(img_name)
     
@@ -126,13 +126,13 @@ def _gen_room(df, output_folder, wanted_date_str, font_css, wkhtmltopdf_path, fo
     pivot_room.columns.name = None
 
     if 'e' in formats:
-        excel_name = f"ဆေးရုံတက်နေရာ_{wanted_date_str}.xlsx"
+        excel_name = f"room_{wanted_date_str}.xlsx"
         pivot_room.to_excel(os.path.join(output_folder, excel_name))
         files.append(excel_name)
 
     if 'p' in formats:
         html = f"<html><head><meta charset='utf-8'>{font_css}</head><body><h3>ဆေးရုံတက်နေရာ အခြေပြဇယား {wanted_date_str}</h3>{pivot_room.to_html(border=0)}</body></html>"
-        img_name = f"ဆေးရုံတက်နေရာ_{wanted_date_str}.png"
+        img_name = f"room_{wanted_date_str}.png"
         generate_image_from_html(html, os.path.join(output_folder, img_name), wkhtmltopdf_path)
         files.append(img_name)
     
