@@ -42,6 +42,19 @@ TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa'
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# --- HELPER: CONVERT DATE TO BURMESE ---
+def get_burmese_today():
+    """Generates today's date in format ၄-၁၂-၂၀၂၅"""
+    now = datetime.now()
+    # Create standard string first: "4-12-2025" (No leading zeros)
+    eng_date = f"{now.day}-{now.month}-{now.year}"
+    
+    # Translate English numbers to Burmese numbers
+    # 0->၀, 1->၁, 2->၂, ...
+    translation_table = str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉")
+    
+    return eng_date.translate(translation_table)
+
 # --- SECURE DRIVE DOWNLOADER ---
 def download_file_from_drive(output_path):
     SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
@@ -117,18 +130,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("<b>📊 Report Generator</b>\nSelect option:", parse_mode='HTML', reply_markup=get_report_menu())
 
     elif query.data == 'action_gen_today':
+        # 1. Calculate dynamic date
+        today_burmese = get_burmese_today()
+        
         await query.edit_message_text("⏳ <b>Generating...</b>\n<i>Authenticating securely & Processing...</i>", parse_mode='HTML')
-        # today_str = datetime.now().strftime("%Y-%m-%d") # Format: 2023-10-27
-        today_str = datetime.now().strftime("၄-၁၂-၂၀၂၅")
         
         try:
-            zip_path = await asyncio.to_thread(generate_reports_sync, today_str)
+            zip_path = await asyncio.to_thread(generate_reports_sync, today_burmese)
             
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=zip_path,
                 filename=os.path.basename(zip_path),
-                caption=f"✅ Reports for {today_str} generated!"
+                caption=f"✅ Reports for {today_burmese} generated!"
             )
             await query.message.reply_text("Done! What else?", reply_markup=get_main_menu_keyboard())
             
