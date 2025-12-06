@@ -1,10 +1,5 @@
 FROM python:3.11-slim-bullseye
 
-# --- FIX: Set Locale to UTF-8 for Burmese Filenames ---
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
-ENV PYTHONIOENCODING=utf-8
-
 # 1. Install system dependencies for wkhtmltoimage and fonts
 RUN apt-get update && apt-get install -y \
     wkhtmltopdf \
