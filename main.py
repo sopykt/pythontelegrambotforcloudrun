@@ -43,17 +43,18 @@ TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # --- HELPER: CONVERT DATE TO BURMESE ---
-def get_burmese_today():
-    """Generates today's date in format ၄-၁၂-၂၀၂၅"""
-    now = datetime.now()
-    # Create standard string first: "4-12-2025" (No leading zeros)
-    eng_date = f"{now.day}-{now.month}-{now.year}"
-    
-    # Translate English numbers to Burmese numbers
-    # 0->၀, 1->၁, 2->၂, ...
+def convert_to_burmese_date(dt_obj):
+    """Converts a datetime object to Burmese format: ၄-၁၂-၂၀၂၅"""
+    eng_date = f"{dt_obj.day}-{dt_obj.month}-{dt_obj.year}"
     translation_table = str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉")
-    
     return eng_date.translate(translation_table)
+
+def get_burmese_today():
+    return convert_to_burmese_date(datetime.now())
+
+def get_burmese_yesterday():
+    yesterday = datetime.now() - timedelta(days=1)
+    return convert_to_burmese_date(yesterday)
 
 # --- SECURE DRIVE DOWNLOADER ---
 def download_file_from_drive(output_path):
@@ -81,6 +82,7 @@ def get_main_menu_keyboard():
 def get_report_menu():
     keyboard = [
         [InlineKeyboardButton("📅 Generate for Today", callback_data='action_gen_today')],
+        [InlineKeyboardButton("⏪ Generate for Yesterday", callback_data='action_gen_yesterday')],
         [InlineKeyboardButton("🔙 Back", callback_data='menu_main')]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -129,20 +131,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'menu_reports':
         await query.edit_message_text("<b>📊 Report Generator</b>\nSelect option:", parse_mode='HTML', reply_markup=get_report_menu())
 
-    elif query.data == 'action_gen_today':
-        # 1. Calculate dynamic date
-        today_burmese = get_burmese_today()
+    elif query.data in ['action_gen_today', 'action_gen_yesterday']:
+        # 1. Determine Date
+        if query.data == 'action_gen_today':
+            target_date = get_burmese_today()
+            label = "Today"
+        else:
+            target_date = get_burmese_yesterday()
+            label = "Yesterday"
         
-        await query.edit_message_text("⏳ <b>Generating...</b>\n<i>Authenticating securely & Processing...</i>", parse_mode='HTML')
+        await query.edit_message_text(
+            f"⏳ <b>Generating for {label} ({target_date})...</b>\n<i>Authenticating securely & Processing...</i>", 
+            parse_mode='HTML'
+        )
         
         try:
-            zip_path = await asyncio.to_thread(generate_reports_sync, today_burmese)
+            # 2. Pass the dynamic date to logic
+            zip_path = await asyncio.to_thread(generate_reports_sync, target_date)
             
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=zip_path,
                 filename=os.path.basename(zip_path),
-                caption=f"✅ Reports for {today_burmese} generated!"
+                caption=f"✅ Reports for {target_date} generated!"
             )
             await query.message.reply_text("Done! What else?", reply_markup=get_main_menu_keyboard())
             
