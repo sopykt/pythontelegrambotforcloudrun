@@ -5,6 +5,7 @@ import zipfile
 import shutil
 import traceback
 import google.auth
+import re  # Added for date regex
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -44,6 +45,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # --- HELPER: CONVERT DATE TO BURMESE ---
 def convert_to_burmese_date(dt_obj):
+    # Converts datetime object to D-M-YYYY in Burmese digits
+    # Example: 6-12-2025 -> ၆-၁၂-၂၀၂၅
     eng_date = f"{dt_obj.day}-{dt_obj.month}-{dt_obj.year}"
     translation_table = str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉")
     return eng_date.translate(translation_table)
@@ -133,50 +136,91 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def gen_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Parses commands like: /gen tatsin p
+    Parses commands intelligently.
+    Examples:
+    /gen tatsin e 4-12-25  -> Specific Date
+    /gen tatsin p          -> Today
+    /gen sitchar e p       -> Today, multiple formats
     """
     args = context.args
+    
+    # Configuration
     valid_types = ['tatsin', 'sitchar', 'room']
     valid_formats = ['e', 'p']
     
-    # 1. Validation Logic
-    is_valid = True
-    
-    # Must have at least 2 args: type + at least one format
-    if len(args) < 2:
-        is_valid = False
-    else:
-        req_type = args[0].lower()
-        req_formats = [a.lower() for a in args[1:]]
-        
-        # Check type
-        if req_type not in valid_types:
-            is_valid = False
-        
-        # Check formats (must be 'e' or 'p', and NO duplicates)
-        if len(req_formats) != len(set(req_formats)): # Check for duplicates (e.g. e e)
-            is_valid = False
-        
-        for f in req_formats:
-            if f not in valid_formats:
-                is_valid = False
+    req_type = None
+    req_formats = []
+    custom_date_obj = None
 
-    if not is_valid:
-        await update.message.reply_text("your command is wrong, check again")
+    # Regex for date: 1-2 digits, hyphen, 1-2 digits, hyphen, 2 or 4 digits
+    # Matches: 4-12-25, 04-12-2025
+    date_pattern = re.compile(r"^(\d{1,2})-(\d{1,2})-(\d{2,4})$")
+
+    # --- 1. Parse Arguments ---
+    for arg in args:
+        arg_lower = arg.lower()
+
+        # Check for Date Pattern (e.g., 6-12-25)
+        date_match = date_pattern.match(arg)
+        if date_match:
+            try:
+                d, m, y = map(int, date_match.groups())
+                # Handle 2-digit year (e.g., 25 -> 2025)
+                if y < 100:
+                    y += 2000
+                
+                custom_date_obj = datetime(y, m, d)
+                continue # Arg processed, move to next
+            except ValueError:
+                # Invalid date numbers (e.g. month 13), ignore or let it fail later
+                pass
+
+        # Check for Report Type
+        if arg_lower in valid_types:
+            req_type = arg_lower
+            continue
+
+        # Check for Formats
+        if arg_lower in valid_formats:
+            if arg_lower not in req_formats:
+                req_formats.append(arg_lower)
+            continue
+
+    # --- 2. Validation ---
+    if not req_type:
+        await update.message.reply_text("⚠️ <b>Error:</b> Specify report type (tatsin, sitchar, room).\nEx: <code>/gen tatsin e</code>", parse_mode='HTML')
         return
 
-    # 2. Execution Logic
-    msg = await update.message.reply_text("⏳ <b>Processing...</b>", parse_mode='HTML')
-    today_burmese = get_burmese_today()
+    if not req_formats:
+        await update.message.reply_text("⚠️ <b>Error:</b> Specify format (e, p).\nEx: <code>/gen tatsin e p</code>", parse_mode='HTML')
+        return
+
+    # --- 3. Determine Date ---
+    if custom_date_obj:
+        # Convert custom date to Burmese string
+        target_burmese_date = convert_to_burmese_date(custom_date_obj)
+        display_info = f"{custom_date_obj.day}-{custom_date_obj.month}-{custom_date_obj.year}"
+    else:
+        # Default to Today
+        target_burmese_date = get_burmese_today()
+        display_info = "Today"
+
+    # --- 4. Execution ---
+    msg = await update.message.reply_text(
+        f"⏳ <b>Processing...</b>\n"
+        f"Type: {req_type.upper()} [{', '.join(req_formats).upper()}]\n"
+        f"Date: {target_burmese_date} ({display_info})", 
+        parse_mode='HTML'
+    )
     
     try:
         # Run specific generation in thread
         file_paths = await asyncio.to_thread(
-            generate_specific_sync, today_burmese, args[0].lower(), [a.lower() for a in args[1:]]
+            generate_specific_sync, target_burmese_date, req_type, req_formats
         )
         
         if not file_paths:
-            await msg.edit_text("⚠️ No data found for today.")
+            await msg.edit_text(f"⚠️ No data found for {target_burmese_date}.")
             return
 
         # Upload files
@@ -238,7 +282,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ptb_application = Application.builder().token(TOKEN).build()
 ptb_application.add_handler(TypeHandler(Update, enforce_access), group=-1)
 ptb_application.add_handler(CommandHandler("start", start))
-ptb_application.add_handler(CommandHandler("gen", gen_command)) # <--- ADDED GEN COMMAND
+ptb_application.add_handler(CommandHandler("gen", gen_command)) 
 ptb_application.add_handler(CallbackQueryHandler(button_handler))
 
 async def lifespan(app: FastAPI):
