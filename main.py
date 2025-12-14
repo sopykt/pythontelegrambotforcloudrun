@@ -313,7 +313,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Echo the user message."""
     response = await runner.run_debug(update.message.text)
-    await update.message.reply_text(response)
+    await update.message.reply_text(response[0].content.parts[0].text)
 
 # --- APP SETUP ---
 ptb_application = Application.builder().token(TOKEN).build()
