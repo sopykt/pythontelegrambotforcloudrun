@@ -21,12 +21,20 @@ from telegram.ext import (
 )
 from googleapiclient.discovery import build
 
+# --- IMPORT GOOGLE ADK components ---
+from google.adk.agents import Agent
+from google.adk.models.google_llm import Gemini
+from google.adk.runners import InMemmoryRunner
+from google.adk.tools import google_search
+from google.genai import types
+
 # --- IMPORT LOGIC ---
 from logic import process_data, process_specific_report
 
 # 1. Load Secrets
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ENV = os.getenv("ADMIN_ID")
+GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
 ALLOWED_USER_IDS = []
 
 if ADMIN_ENV:
@@ -40,6 +48,28 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = '/tmp/uploads'
 FONT_PATH = os.path.join(BASE_DIR, 'fonts', 'NotoSansMyanmar-Regular.ttf')
 WKHTML_PATH = '/usr/bin/wkhtmltoimage'
+
+
+# --- CONFIGURE RETRY OPTIONS ---
+retry_config=types.HttpRetryOptions(
+    attempts=5,  # Maximum retry attempts
+    exp_base=7,  # Delay multiplier
+    initial_delay=1, # Initial delay before first retry (in seconds)
+    http_status_codes=[429, 500, 503, 504] # Retry on these HTTP errors
+)
+
+root_agent = Agent(
+    name = "helpful_assistant",
+    model = Gemini(
+        model="gemini-2.5-flash-lite",
+        retry_options=retry_config
+    ),
+    description = "A simple agent that can answer general questions.",
+    instruction = "You are a helpful assistant. Use Google Search for current info or if unsure.",
+    tools=[google_search],
+)
+
+runner = InMemoryRunner(agent = root_agent)
 
 TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
 
@@ -282,7 +312,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Echo the user message."""
-    await update.message.reply_text(update.message.text)
+    response = await runner.run_debug(update.message.text)
+    await update.message.reply_text(response)
 
 # --- APP SETUP ---
 ptb_application = Application.builder().token(TOKEN).build()
