@@ -24,7 +24,7 @@ from googleapiclient.discovery import build
 # --- IMPORT GOOGLE ADK components ---
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
-from google.adk.runners import InMemmoryRunner
+from google.adk.runners import InMemoryRunner
 from google.adk.tools import google_search
 from google.genai import types
 
