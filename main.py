@@ -15,7 +15,9 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     TypeHandler,
-    ApplicationHandlerStop
+    ApplicationHandlerStop,
+    MessageHandler,
+    filters
 )
 from googleapiclient.discovery import build
 
@@ -278,12 +280,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"🔥 ERROR:\n{error_details}") 
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Echo the user message."""
+    await update.message.reply_text(update.message.text)
+
 # --- APP SETUP ---
 ptb_application = Application.builder().token(TOKEN).build()
 ptb_application.add_handler(TypeHandler(Update, enforce_access), group=-1)
 ptb_application.add_handler(CommandHandler("start", start))
 ptb_application.add_handler(CommandHandler("gen", gen_command)) 
 ptb_application.add_handler(CallbackQueryHandler(button_handler))
+ptb_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
 
 async def lifespan(app: FastAPI):
     await ptb_application.initialize()
