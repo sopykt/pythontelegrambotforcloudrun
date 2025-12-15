@@ -362,33 +362,25 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("⚠️ Error connecting to memory service.")
         return
 
-    # --- 2. DEFINE SYNC WORKER ---
-    # We define the runner function to be executed in a separate thread
-    def run_agent_sync():
-        content = types.Content(role='user', parts=[types.Part(text=user_text)])
-        
-        # We can now safely run this because session_id is guaranteed valid
-        events = runner.run(
-            user_id=user_id, 
-            session_id=session_id, 
-            new_message=content
-        )
-        
-        # Extract response
-        for event in events:
-            if event.is_final_response():
-                 return event.content.parts[0].text
-        return None
-
-    # --- 3. EXECUTE AGENT ---
+    # --- 2. EXECUTE AGENT (ASYNC) ---
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
-        # Run the blocking agent code in a background thread
-        final_response = await asyncio.to_thread(run_agent_sync)
-        
-        if final_response:
-            await update.message.reply_text(final_response)
+        final_response_text = ""
+        content = types.Content(role='user', parts=[types.Part(text=user_text)])
+
+        # FIX: Use run_async directly instead of asyncio.to_thread
+        # This prevents the "Event loop is closed" error
+        async for event in runner.run_async(
+            user_id=user_id, 
+            session_id=session_id, 
+            new_message=content
+        ):
+            if event.is_final_response():
+                final_response_text = event.content.parts[0].text
+
+        if final_response_text:
+            await update.message.reply_text(final_response_text)
         else:
             await update.message.reply_text("🤔 I'm thinking, but I have nothing to say.")
             
