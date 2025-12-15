@@ -42,6 +42,7 @@ GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
 PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION")    
 AGENT_ENGINE_ID = os.getenv("AGENT_ENGINE_ID")
+app_name = "assistant-ai-tg"
 
 ALLOWED_USER_IDS = []
 if ADMIN_ENV:
@@ -86,7 +87,7 @@ session_service = VertexAiSessionService(
 
 runner = adk.Runner(
     agent=root_agent,
-    app_name='assistant-ai-tg',
+    app_name=app_name,
     session_service=session_service
 )
 
@@ -339,10 +340,14 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # 2. Wrapper for blocking ADK runner
     def run_agent_sync():
         content = types.Content(role='user', parts=[types.Part(text=user_text)])
+        session = await session_service.create_session(
+            app_name=app_name,
+            user_id=user_id)
+        print(session.id)
         # Execute the run with session_id
         events = runner.run(
             user_id=user_id, 
-            session_id=session_id, 
+            session_id=session.id, 
             new_message=content
         )
         # Extract final response
