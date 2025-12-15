@@ -333,21 +333,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Gemini response using Vertex AI Sessions with Auto-Creation."""
     # 1. Use Telegram Chat ID as the Session ID
-    session_id = str(update.effective_chat.id)
+    # session_id = str(update.effective_chat.id)
     user_id = str(update.effective_user.id)
     user_text = update.message.text
-
-    # 2. Wrapper for blocking ADK runner
-    def run_agent_sync():
-        content = types.Content(role='user', parts=[types.Part(text=user_text)])
+    list_session = await session_service.list_sessions(app_name=app_name,user_id=user_id)
+    if len(list_session.session_ids) > 0:
+        session_id = list_session.session_ids[0]
+        print(f"Session existing - {session_id}")
+    else:
         session = await session_service.create_session(
             app_name=app_name,
             user_id=user_id)
-        print(session.id)
+        session_id = session.id
+        print(f"New session created - {session_id}")
+    # 2. Wrapper for blocking ADK runner
+    def run_agent_sync():
+        content = types.Content(role='user', parts=[types.Part(text=user_text)])
         # Execute the run with session_id
         events = runner.run(
             user_id=user_id, 
-            session_id=session.id, 
+            session_id=session_id, 
             new_message=content
         )
         # Extract final response
