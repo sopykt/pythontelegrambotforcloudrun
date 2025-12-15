@@ -331,55 +331,59 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Gemini response using Vertex AI Sessions with Auto-Creation."""
-    # 1. Use Telegram Chat ID as the Session ID
-    # session_id = str(update.effective_chat.id)
+    """Gemini response using Vertex AI Sessions (Get or Create pattern)."""
+    
     user_id = str(update.effective_user.id)
     user_text = update.message.text
-    list_session = await session_service.list_sessions(app_name=app_name,user_id=user_id)
-    if list_session.session_ids:
-        session_id = list_session.session_ids[0]
-        print(f"Session existing - {session_id}")
-    else:
-        session = await session_service.create_session(
-            app_name=app_name,
-            user_id=user_id)
-        session_id = session.id
-        print(f"New session created - {session_id}")
-    # 2. Wrapper for blocking ADK runner
+    session_id = None
+
+    # --- 1. SESSION MANAGEMENT (The new logic you added) ---
+    try:
+        # Check if this user already has active sessions
+        list_session = await session_service.list_sessions(app_name=app_name, user_id=user_id)
+        
+        if list_session.session_ids:
+            # Resume the most recent session
+            session_id = list_session.session_ids[0]
+            print(f"✅ Found existing session: {session_id}")
+        else:
+            # Create a completely new session for this user
+            session = await session_service.create_session(
+                app_name=app_name,
+                user_id=user_id
+            )
+            session_id = session.id
+            print(f"🆕 Created new session: {session_id}")
+            
+    except Exception as e:
+        print(f"Session Error: {e}")
+        await update.message.reply_text("⚠️ Error connecting to memory service.")
+        return
+
+    # --- 2. DEFINE SYNC WORKER ---
+    # We define the runner function to be executed in a separate thread
     def run_agent_sync():
         content = types.Content(role='user', parts=[types.Part(text=user_text)])
-        # Execute the run with session_id
+        
+        # We can now safely run this because session_id is guaranteed valid
         events = runner.run(
             user_id=user_id, 
             session_id=session_id, 
             new_message=content
         )
-        # Extract final response
+        
+        # Extract response
         for event in events:
             if event.is_final_response():
                  return event.content.parts[0].text
         return None
 
-    # 3. Execution
+    # --- 3. EXECUTE AGENT ---
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        try:
-            # 1. Try to run normally (will fail if session doesn't exist)
-            final_response = await asyncio.to_thread(run_agent_sync)
-            
-        except ClientError as e:
-            # 2. Check for 404 Not Found (Session Missing)
-            if e.code == 404:
-                print(f"⚠️ Session {session_id} not found. Creating new session...")
-                # Create the session asynchronously
-                await runner.session_service.create_session(session_id=session_id)
-                
-                # 3. Retry the run
-                final_response = await asyncio.to_thread(run_agent_sync)
-            else:
-                # Re-raise other errors
-                raise e
+        
+        # Run the blocking agent code in a background thread
+        final_response = await asyncio.to_thread(run_agent_sync)
         
         if final_response:
             await update.message.reply_text(final_response)
@@ -387,9 +391,9 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text("🤔 I'm thinking, but I have nothing to say.")
             
     except Exception as e:
-        print(f"Agent Error: {e}")
+        print(f"Agent Execution Error: {e}")
         traceback.print_exc()
-        await update.message.reply_text("⚠️ Brain freeze! (API Error)")
+        await update.message.reply_text("⚠️ Brain freeze! (Agent Error)")
     
 
 # --- APP SETUP ---
