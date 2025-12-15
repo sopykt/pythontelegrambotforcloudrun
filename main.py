@@ -22,11 +22,13 @@ from telegram.ext import (
 from googleapiclient.discovery import build
 
 # --- IMPORT GOOGLE ADK components ---
+from google import adk
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
 from google.adk.tools import google_search
 from google.genai import types
+from google.adk.sessions import VertexAiSessionService
 
 # --- IMPORT LOGIC ---
 from logic import process_data, process_specific_report
@@ -35,8 +37,12 @@ from logic import process_data, process_specific_report
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ENV = os.getenv("ADMIN_ID")
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
-ALLOWED_USER_IDS = []
+# --- AGENT ENGINE CONFIGURATION ---
+PROJECT_ID = os.getenv("PROJECT_ID")
+LOCATION = os.getenv("LOCATION")    
+AGENT_ENGINE_ID = os.getenv("AGENT_ENGINE_ID")
 
+ALLOWED_USER_IDS = []
 if ADMIN_ENV:
     try:
         ALLOWED_USER_IDS = [int(ADMIN_ENV)]
@@ -69,7 +75,18 @@ root_agent = Agent(
     tools=[google_search],
 )
 
-runner = InMemoryRunner(agent = root_agent)
+# --- RUNNER SETUP WITH SESSIONS ---
+# Initialize the connection to Vertex AI Session Service
+session_service = VertexAiSessionService(
+    PROJECT_ID,
+    LOCATION,
+    AGENT_ENGINE_ID
+)
+
+runner = adk.Runner(
+    agent=root_agent,
+    session_service=session_service
+)
 
 TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
 
@@ -310,10 +327,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"🔥 ERROR:\n{error_details}") 
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Echo the user message."""
-    response = await runner.run_debug(update.message.text)
-    await update.message.reply_text(response[0].content.parts[0].text)
+async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Gemini response the user message."""
+    # 1. Use Telegram Chat ID as the Session ID
+    session_id = str(update.effective_chat.id)
+    user_id = str(update.effective_user.id)
+    user_text = update.message.text
+
+    # 2. Wrapper for blocking ADK runner
+    def run_agent_sync():
+        content = types.Content(role='user', parts=[types.Part(text=user_text)])
+        # Execute the run with session_id
+        events = runner.run(
+            user_id=user_id, 
+            session_id=session_id, 
+            new_message=content
+        )
+        # Extract final response
+        for event in events:
+            if event.is_final_response():
+                 return event.content.parts[0].text
+        return None
+
+    # 3. Execution
+    try:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        final_response = await asyncio.to_thread(run_agent_sync)
+        
+        if final_response:
+            await update.message.reply_text(final_response)
+        else:
+            await update.message.reply_text("🤔 I'm thinking, but I have nothing to say.")
+            
+    except Exception as e:
+        print(f"Agent Error: {e}")
+        traceback.print_exc()
+        await update.message.reply_text("⚠️ Brain freeze! (API Error)")
+    
 
 # --- APP SETUP ---
 ptb_application = Application.builder().token(TOKEN).build()
@@ -321,7 +371,7 @@ ptb_application.add_handler(TypeHandler(Update, enforce_access), group=-1)
 ptb_application.add_handler(CommandHandler("start", start))
 ptb_application.add_handler(CommandHandler("gen", gen_command)) 
 ptb_application.add_handler(CallbackQueryHandler(button_handler))
-ptb_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+ptb_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gemini_res))
 
 
 async def lifespan(app: FastAPI):
