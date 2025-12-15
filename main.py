@@ -29,6 +29,7 @@ from google.adk.runners import InMemoryRunner
 from google.adk.tools import google_search
 from google.genai import types
 from google.adk.sessions import VertexAiSessionService
+from google.genai.errors import ClientError
 
 # --- IMPORT LOGIC ---
 from logic import process_data, process_specific_report
@@ -329,7 +330,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Gemini response the user message."""
+    """Gemini response using Vertex AI Sessions with Auto-Creation."""
     # 1. Use Telegram Chat ID as the Session ID
     session_id = str(update.effective_chat.id)
     user_id = str(update.effective_user.id)
@@ -353,7 +354,22 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # 3. Execution
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        final_response = await asyncio.to_thread(run_agent_sync)
+        try:
+            # 1. Try to run normally (will fail if session doesn't exist)
+            final_response = await asyncio.to_thread(run_agent_sync)
+            
+        except ClientError as e:
+            # 2. Check for 404 Not Found (Session Missing)
+            if e.code == 404:
+                print(f"⚠️ Session {session_id} not found. Creating new session...")
+                # Create the session asynchronously
+                await runner.session_service.create_session(session_id=session_id)
+                
+                # 3. Retry the run
+                final_response = await asyncio.to_thread(run_agent_sync)
+            else:
+                # Re-raise other errors
+                raise e
         
         if final_response:
             await update.message.reply_text(final_response)
