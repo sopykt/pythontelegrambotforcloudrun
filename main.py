@@ -346,7 +346,7 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if response.sessions:
             print(f"response.sessions -> {response.sessions}")
             # Resume the most recent session
-            session_id = response.sessions[0]
+            session_id = response.sessions[0].id
             print(f"✅ Found existing session: {session_id}")
         else:
             # Create a completely new session for this user
