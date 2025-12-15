@@ -85,6 +85,7 @@ session_service = VertexAiSessionService(
 
 runner = adk.Runner(
     agent=root_agent,
+    app_name='assistant-ai-tg',
     session_service=session_service
 )
 
