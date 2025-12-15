@@ -340,11 +340,12 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # --- 1. SESSION MANAGEMENT (The new logic you added) ---
     try:
         # Check if this user already has active sessions
-        list_session = await session_service.list_sessions(app_name=app_name, user_id=user_id)
+        response = await session_service.list_sessions(app_name=app_name, user_id=user_id)
+        print(f"DEBUG RESPONSE: {dir(response)}")
         
-        if list_session.session_ids:
+        if response.sessions:
             # Resume the most recent session
-            session_id = list_session.session_ids[0]
+            session_id = response.sessions[0].session_id
             print(f"✅ Found existing session: {session_id}")
         else:
             # Create a completely new session for this user
