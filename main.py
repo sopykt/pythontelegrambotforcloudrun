@@ -337,7 +337,7 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_id = str(update.effective_user.id)
     user_text = update.message.text
     list_session = await session_service.list_sessions(app_name=app_name,user_id=user_id)
-    if len(list_session.session_ids) > 0:
+    if list_session.session_ids:
         session_id = list_session.session_ids[0]
         print(f"Session existing - {session_id}")
     else:
