@@ -26,7 +26,7 @@ from google import adk
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.tools import google_search, FunctionTool
+from google.adk.tools import google_search, FunctionTool, AgentTool
 from google.genai import types
 from google.adk.sessions import VertexAiSessionService
 from google.genai.errors import ClientError
@@ -107,15 +107,39 @@ def get_admitted_patients_count() -> str:
 
 admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
+# "Worker" Agent just for Google Search
+search_worker = Agent(
+    name="search_worker",
+    model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
+    tools=[google_search], 
+    instruction="You are a research specialist. Use Google Search to find current information."
+)
+
+# "Worker" Agent just for Patient Data
+data_worker = Agent(
+    name="data_worker",
+    model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
+    tools=[admitted_patient_tool],
+    instruction="You are a data analyst. Use the admitted_patient_tool to check the database."
+)
+
+# Root Agent (The Boss)
 root_agent = Agent(
-    name = "helpful_assistant",
-    model = Gemini(
+    name="helpful_assistant",
+    model=Gemini(
         model="gemini-2.5-flash-lite",
         retry_options=retry_config
     ),
-    description = "A simple agent that can answer general questions and query patient data.",
-    instruction = "You are a helpful assistant. Use tools to query patient data when asked about patient data and reply politely. If error or cannot find data that user want, reply politey. You don't have to use exact string you get from tools. If user use Burmese language, reply with Burmese.",
-    tools=[admitted_patient_tool],
+    description="A helpful assistant that can search the web and query patient data.",
+    instruction="""
+    You are a helpful assistant.
+    - If the user asks for external info (weather, news, etc), call the 'search_worker'.
+    - If the user asks about internal patient data, call the 'data_worker'.
+    """,
+    tools=[
+        AgentTool(search_worker), 
+        AgentTool(data_worker)
+    ],
 )
 
 # --- RUNNER SETUP WITH SESSIONS ---
