@@ -142,6 +142,28 @@ async def enforce_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ALLOWED_USER_IDS:
         raise ApplicationHandlerStop
 
+def get_admitted_patients_count() -> str:
+    """
+    Calculates and returns the total number of currently admitted patients.
+
+    This function reads the locally cached Excel data ('drive_data.xlsx'), filters for 
+    patients who have not yet been discharged or transferred (where both discharge 
+    and transfer dates are missing), and returns the total count.
+
+    Returns:
+        str: A summary sentence with the count (e.g., "Total admitted patients: 45").
+             If the data file is missing or invalid, returns an error message.
+    """
+    if os.path.exists(UPLOAD_FOLDER):
+        shutil.rmtree(UPLOAD_FOLDER)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    
+    excel_path = os.path.join(UPLOAD_FOLDER, "drive_data.xlsx")
+    download_file_from_drive(excel_path)
+
+    if not os.path.exists(excel_path):
+        return "Error: Data file not found. Please ask user to 'Fix loading data file properly' first to download the latest data."
+
 # --- HEAVY TASKS (SYNC) ---
 def generate_reports_sync(date_string):
     """Old button logic: generates ALL files and Zips them"""
