@@ -106,7 +106,7 @@ def get_admitted_patients_count() -> str:
 
 
 # 1. Wrap your custom function
-# admitted_patient_tool = FunctionTool(get_admitted_patients_count)
+admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
 # 2. Search Worker
 search_worker = Agent(
@@ -121,10 +121,10 @@ search_worker = Agent(
 data_worker = Agent(
     name="data_worker",
     model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-    tools=[get_admitted_patients_count],
+    tools=[admitted_patient_tool],
     # CRITICAL CHANGE: The description tells the Root Agent WHAT this worker does
     description="A specialist agent that has EXCLUSIVE access to the patient database. You MUST delegate any patient data questions to this agent.",
-    instruction="You are a data analyst. Use the get_admitted_patients_count to check the database."
+    instruction="You are a data analyst. Use the tool to check the database."
 )
 
 # 4. Root Agent (The Boss)
@@ -142,7 +142,7 @@ root_agent = Agent(
     RULES FOR TOOLS:
     1. You DO NOT have direct access to the database or search.
     2. You ONLY have two tools: 'search_worker' and 'data_worker'.
-    3. If the user asks about patient data (counts, admissions), you MUST call the 'data_worker'. DO NOT try to call 'get_admitted_patients_count' directly.
+    3. If the user asks about patient data (counts, admissions), you MUST call the 'data_worker'. DO NOT try to call 'admitted_patient_tool' directly.
     4. If the user asks for general info, call the 'search_worker'.
     """,
     tools=[
