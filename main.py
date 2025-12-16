@@ -26,7 +26,7 @@ from google import adk
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.tools import google_search
+from google.adk.tools import google_search, FunctionTool
 from google.genai import types
 from google.adk.sessions import VertexAiSessionService
 from google.genai.errors import ClientError
@@ -72,9 +72,9 @@ root_agent = Agent(
         model="gemini-2.5-flash-lite",
         retry_options=retry_config
     ),
-    description = "A simple agent that can answer general questions.",
-    instruction = "You are a helpful assistant. Use Google Search for current info or if unsure.",
-    tools=[google_search],
+    description = "A simple agent that can answer general questions and query patient data.",
+    instruction = "You are a helpful assistant. Use tools to query patient data when asked and use Google Search for current external info or if unsure.",
+    tools=[google_search, admitted_patient_tool],
 )
 
 # --- RUNNER SETUP WITH SESSIONS ---
@@ -141,6 +141,38 @@ async def enforce_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user: return
     if update.effective_user.id not in ALLOWED_USER_IDS:
         raise ApplicationHandlerStop
+
+def get_admitted_patients_count() -> str:
+    """
+    Calculates and returns the total number of currently admitted patients.
+
+    This function reads the locally cached Excel data ('drive_data.xlsx'), filters for 
+    patients who have not yet been discharged or transferred (where both discharge 
+    and transfer dates are missing), and returns the total count.
+
+    Returns:
+        str: A summary sentence with the count (e.g., "Total admitted patients: 45").
+             If the data file is missing or invalid, returns an error message.
+    """
+    if os.path.exists(UPLOAD_FOLDER):
+        shutil.rmtree(UPLOAD_FOLDER)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    
+    excel_path = os.path.join(UPLOAD_FOLDER, "drive_data.xlsx")
+    download_file_from_drive(excel_path)
+
+    if not os.path.exists(excel_path):
+        return "Error: Data file not found. Please ask user to 'Fix loading data file properly' first to download the latest data."
+
+    try:
+        count = calculate_admitted_df_len(excel_path)
+        return f"There are currently {count} admitted patients."
+    except Exception as e:
+        return f"Error processing data: {str(e)}"
+
+
+admitted_patient_tool = FunctionTool(get_admitted_patients_count)
+
 
 # --- HEAVY TASKS (SYNC) ---
 def generate_reports_sync(date_string):

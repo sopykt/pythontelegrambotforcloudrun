@@ -20,6 +20,12 @@ def generate_image_from_html(html_content, output_path, wkhtmltopdf_path):
     }
     imgkit.from_string(html_content, output_path, config=config, options=options)
 
+def calculate_admitted_df_len(input_file_path):
+    df = pd.read_excel(input_file_path)
+    cols_na = ['ဆေးရုံဆင်းရက်','ဆေးရုံပြောင်းရက်']
+    admitted_patients = df[df[cols_na].isna().all(axis=1)]
+    return len(admitted_patients)
+
 def build_custom_table(df):
     df = df.reset_index(drop=True)
     result = pd.DataFrame()
