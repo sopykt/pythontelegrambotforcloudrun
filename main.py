@@ -1,4 +1,4 @@
-import os
+import os-make-build-fail
 import uvicorn
 import asyncio
 import zipfile
