@@ -26,7 +26,7 @@ from google import adk
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.tools import google_search
+from google.adk.tools import google_search, FunctionTool
 from google.genai import types
 from google.adk.sessions import VertexAiSessionService
 from google.genai.errors import ClientError
@@ -74,7 +74,7 @@ root_agent = Agent(
     ),
     description = "A simple agent that can answer general questions and query patient data.",
     instruction = "You are a helpful assistant. Use tools to query patient data when asked and use Google Search for current external info or if unsure.",
-    tools=[google_search],
+    tools=[google_search, admitted_patient_tool],
 )
 
 # --- RUNNER SETUP WITH SESSIONS ---
@@ -169,6 +169,9 @@ def get_admitted_patients_count() -> str:
         return f"There are currently {count} admitted patients."
     except Exception as e:
         return f"Error processing data: {str(e)}"
+
+
+admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
 
 # --- HEAVY TASKS (SYNC) ---
