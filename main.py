@@ -72,8 +72,8 @@ root_agent = Agent(
         model="gemini-2.5-flash-lite",
         retry_options=retry_config
     ),
-    description = "A simple agent that can answer general questions.",
-    instruction = "You are a helpful assistant. Use Google Search for current info or if unsure.",
+    description = "A simple agent that can answer general questions and query patient data.",
+    instruction = "You are a helpful assistant. Use tools to query patient data when asked and use Google Search for current external info or if unsure.",
     tools=[google_search],
 )
 
@@ -163,6 +163,13 @@ def get_admitted_patients_count() -> str:
 
     if not os.path.exists(excel_path):
         return "Error: Data file not found. Please ask user to 'Fix loading data file properly' first to download the latest data."
+
+    try:
+        count = calculate_admitted_df_len(excel_path)
+        return f"There are currently {count} admitted patients."
+    except Exception as e:
+        return f"Error processing data: {str(e)}"
+
 
 # --- HEAVY TASKS (SYNC) ---
 def generate_reports_sync(date_string):
