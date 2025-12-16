@@ -106,7 +106,7 @@ def get_admitted_patients_count() -> str:
 
 
 # 1. Wrap your custom function
-admitted_patient_tool = FunctionTool(get_admitted_patients_count)
+# admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
 # 2. Search Worker
 search_worker = Agent(
@@ -121,10 +121,10 @@ search_worker = Agent(
 data_worker = Agent(
     name="data_worker",
     model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-    tools=[admitted_patient_tool],
+    tools=[get_admitted_patients_count],
     # CRITICAL CHANGE: The description tells the Root Agent WHAT this worker does
     description="A specialist agent that has EXCLUSIVE access to the patient database. You MUST delegate any patient data questions to this agent.",
-    instruction="You are a data analyst. Use the admitted_patient_tool to check the database."
+    instruction="You are a data analyst. Use the get_admitted_patients_count to check the database."
 )
 
 # 4. Root Agent (The Boss)
