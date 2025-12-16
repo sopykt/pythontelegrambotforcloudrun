@@ -114,8 +114,8 @@ root_agent = Agent(
         retry_options=retry_config
     ),
     description = "A simple agent that can answer general questions and query patient data.",
-    instruction = "You are a helpful assistant. Use tools to query patient data when asked and use Google Search for current external info or if unsure.",
-    tools=[google_search, admitted_patient_tool],
+    instruction = "You are a helpful assistant. Use tools to query patient data when asked.",
+    tools=[admitted_patient_tool],
 )
 
 # --- RUNNER SETUP WITH SESSIONS ---
