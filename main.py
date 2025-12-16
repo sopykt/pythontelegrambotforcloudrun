@@ -32,7 +32,7 @@ from google.adk.sessions import VertexAiSessionService
 from google.genai.errors import ClientError
 
 # --- IMPORT LOGIC ---
-from logic import process_data, process_specific_report
+from logic import process_data, process_specific_report, calculate_admitted_df_len
 
 # 1. Load Secrets
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -65,6 +65,47 @@ retry_config=types.HttpRetryOptions(
     initial_delay=1, # Initial delay before first retry (in seconds)
     http_status_codes=[429, 500, 503, 504] # Retry on these HTTP errors
 )
+
+# --- SECURE DRIVE DOWNLOADER ---
+def download_file_from_drive(output_path):
+    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+    creds, _ = google.auth.default(scopes=SCOPES)
+    service = build('drive', 'v3', credentials=creds)
+    
+    request = service.files().get_media(fileId=TARGET_FILE_ID)
+    with open(output_path, 'wb') as f:
+        f.write(request.execute())
+
+def get_admitted_patients_count() -> str:
+    """
+    Calculates and returns the total number of currently admitted patients.
+
+    This function reads the locally cached Excel data ('drive_data.xlsx'), filters for 
+    patients who have not yet been discharged or transferred (where both discharge 
+    and transfer dates are missing), and returns the total count.
+
+    Returns:
+        str: A summary sentence with the count (e.g., "Total admitted patients: 45").
+             If the data file is missing or invalid, returns an error message.
+    """
+    if os.path.exists(UPLOAD_FOLDER):
+        shutil.rmtree(UPLOAD_FOLDER)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    
+    excel_path = os.path.join(UPLOAD_FOLDER, "drive_data.xlsx")
+    download_file_from_drive(excel_path)
+
+    if not os.path.exists(excel_path):
+        return "Error: Data file not found. Please ask user to 'Fix loading data file properly' first to download the latest data."
+
+    try:
+        count = calculate_admitted_df_len(excel_path)
+        return f"There are currently {count} admitted patients."
+    except Exception as e:
+        return f"Error processing data: {str(e)}"
+
+
+admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
 root_agent = Agent(
     name = "helpful_assistant",
@@ -110,16 +151,6 @@ def get_burmese_yesterday():
     yesterday = datetime.now() - timedelta(days=1)
     return convert_to_burmese_date(yesterday)
 
-# --- SECURE DRIVE DOWNLOADER ---
-def download_file_from_drive(output_path):
-    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-    creds, _ = google.auth.default(scopes=SCOPES)
-    service = build('drive', 'v3', credentials=creds)
-    
-    request = service.files().get_media(fileId=TARGET_FILE_ID)
-    with open(output_path, 'wb') as f:
-        f.write(request.execute())
-
 # --- KEYBOARDS ---
 def get_main_menu_keyboard():
     keyboard = [
@@ -141,37 +172,6 @@ async def enforce_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user: return
     if update.effective_user.id not in ALLOWED_USER_IDS:
         raise ApplicationHandlerStop
-
-def get_admitted_patients_count() -> str:
-    """
-    Calculates and returns the total number of currently admitted patients.
-
-    This function reads the locally cached Excel data ('drive_data.xlsx'), filters for 
-    patients who have not yet been discharged or transferred (where both discharge 
-    and transfer dates are missing), and returns the total count.
-
-    Returns:
-        str: A summary sentence with the count (e.g., "Total admitted patients: 45").
-             If the data file is missing or invalid, returns an error message.
-    """
-    if os.path.exists(UPLOAD_FOLDER):
-        shutil.rmtree(UPLOAD_FOLDER)
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    
-    excel_path = os.path.join(UPLOAD_FOLDER, "drive_data.xlsx")
-    download_file_from_drive(excel_path)
-
-    if not os.path.exists(excel_path):
-        return "Error: Data file not found. Please ask user to 'Fix loading data file properly' first to download the latest data."
-
-    try:
-        count = calculate_admitted_df_len(excel_path)
-        return f"There are currently {count} admitted patients."
-    except Exception as e:
-        return f"Error processing data: {str(e)}"
-
-
-admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
 
 # --- HEAVY TASKS (SYNC) ---
