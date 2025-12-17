@@ -353,34 +353,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"🔥 ERROR:\n{error_details}") 
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
-# --- ISOLATED AGENT EXECUTION (THE FIX) ---
-def run_multi_agent_sync(user_text, user_id):
+# --- AGENT FACTORY (The Fix) ---
+def create_local_agent_runner():
     """
-    Runs the entire agent lifecycle (Session Check -> Execution) in a single synchronous thread.
-    This prevents 'Client Closed' errors by ensuring no AsyncClient leaks between loops.
+    Creates a fresh Agent and Runner instance.
+    This MUST be called inside the request handler to ensure
+    the HTTP client attaches to the correct asyncio loop.
     """
-    print(f"--- 🔄 Starting Sync Agent Run for {user_id} ---")
     
-    # 1. Setup Session Service (Fresh instance)
-    # Using sync methods or bridging correctly if the SDK forces async.
-    # Note: VertexAiSessionService methods are typically async. 
-    # Since we are in a thread, we must run a NEW event loop for this work 
-    # OR use the synchronous 'Runner.run' which handles its own loop logic internally.
-    
-    # Ideally, we pass the session_id if we have it, but since we can't get it 
-    # reliably from the main loop without errors, we might need a workaround.
-    # WORKAROUND: For this specific error, we let the Runner manage the session 
-    # using the user_id as a lookup, if supported, or we accept we might create new sessions.
-    
-    # However, to be perfectly safe, we will use a fresh Runner which creates its own internal loop.
-    
+    # 1. Fresh Session Service
     local_session_service = VertexAiSessionService(
         PROJECT_ID,
         LOCATION,
         AGENT_ENGINE_ID
     )
 
-    # 2. Re-Initialize Workers (Fresh Model Clients)
+    # 2. Fresh Workers
     search_worker = Agent(
         name="search_worker",
         model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
@@ -397,6 +385,7 @@ def run_multi_agent_sync(user_text, user_id):
         instruction="You are a data analyst. Use the admitted_patient_tool to check the database."
     )
 
+    # 3. Fresh Root Agent
     root_agent = Agent(
         name="helpful_assistant",
         model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
@@ -410,67 +399,61 @@ def run_multi_agent_sync(user_text, user_id):
         tools=[AgentTool(search_worker), AgentTool(data_worker)],
     )
 
+    # 4. Fresh Runner
     local_runner = adk.Runner(
         agent=root_agent,
         app_name=app_name,
         session_service=local_session_service
     )
-
-    content = types.Content(role='user', parts=[types.Part(text=user_text)])
-
-    # CRITICAL: We use runner.run() which is the SYNCHRONOUS blocking call.
-    # This will handle the session lookup internally via the session_service 
-    # (or create a new one if session_id is None).
     
-    # We must first get or create a session. Since we can't await here (we are sync),
-    # we have to use a small helper or rely on the runner.
-    # The ADK Runner.run() method usually takes a session_id. 
-    # If we don't have one, we have to create one. 
-    # BUT: session_service.create_session is async.
-    
-    # SOLUTION: We use asyncio.run() INSIDE this thread to handle the async setup parts
-    # strictly for this thread.
-    
-    async def _async_setup_and_run():
-        # A. Get Session ID
-        sessions_list = await local_session_service.list_sessions(app_name=app_name, user_id=user_id)
-        if sessions_list.sessions:
-            sid = sessions_list.sessions[0].id
-        else:
-            new_sess = await local_session_service.create_session(app_name=app_name, user_id=user_id)
-            sid = new_sess.id
-            
-        # B. Run Agent (using run_async inside this local loop is safer than run() wrapper)
-        responses = []
-        async for evt in local_runner.run_async(user_id=user_id, session_id=sid, new_message=content):
-            if evt.is_final_response():
-                responses.append(evt.content.parts[0].text)
-        return responses[0] if responses else ""
-
-    # Execute the isolated async loop
-    result_text = asyncio.run(_async_setup_and_run())
-            
-    print(f"--- ✅ Sync Agent Run Finished ---")
-    return result_text
+    return local_runner, local_session_service
     
 
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    CLEAN HANDLER:
-    It does NO google work itself. It just dispatches to the isolated thread.
+    CORRECT ASYNC HANDLER:
+    Instantiates components LOCALLY on the current event loop.
+    Uses native await/async (no threads for SDK calls).
     """
     user_id = str(update.effective_user.id)
     user_text = update.message.text
+    session_id = None
 
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
-        # Dispatch to completely isolated thread
-        final_response_text = await asyncio.to_thread(
-            run_multi_agent_sync, 
-            user_text, 
-            user_id
-        )
+        # 1. CREATE FRESH INSTANCES (Bind to current Loop)
+        local_runner, local_session_service = create_local_agent_runner()
+
+        # 2. SESSION MANAGEMENT (Async)
+        try:
+            # We must use the local_session_service we just created
+            response = await local_session_service.list_sessions(app_name=app_name, user_id=user_id)
+            if response.sessions:
+                session_id = response.sessions[0].id
+            else:
+                session = await local_session_service.create_session(
+                    app_name=app_name,
+                    user_id=user_id
+                )
+                session_id = session.id
+        except Exception as e:
+            print(f"Session Warning: {e}")
+            # Continue without session_id if possible, or handle error
+            # If session is critical, we might need to return here
+            pass 
+
+        # 3. EXECUTE AGENT (Native Async)
+        final_response_text = ""
+        content = types.Content(role='user', parts=[types.Part(text=user_text)])
+
+        async for event in local_runner.run_async(
+            user_id=user_id, 
+            session_id=session_id, 
+            new_message=content
+        ):
+            if event.is_final_response():
+                final_response_text = event.content.parts[0].text
 
         if final_response_text:
             await update.message.reply_text(final_response_text)
