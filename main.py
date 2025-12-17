@@ -109,61 +109,19 @@ def get_admitted_patients_count() -> str:
 admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
 # 2. Search Worker
-search_worker = Agent(
-    name="search_worker",
-    model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-    tools=[google_search],
-    description="A specialist that searches the internet. Call this for weather, news, or general knowledge.",
-    instruction="You are a research specialist. Use Google Search to find current information."
-)
+
 
 # 3. Data Worker
-data_worker = Agent(
-    name="data_worker",
-    model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-    tools=[admitted_patient_tool],
-    # CRITICAL CHANGE: The description tells the Root Agent WHAT this worker does
-    description="A specialist agent that has EXCLUSIVE access to the patient database. You MUST delegate any patient data questions to this agent.",
-    instruction="You are a data analyst. Use the admitted_patient_tool to check the database."
-)
+
 
 # 4. Root Agent (The Boss)
-root_agent = Agent(
-    name="helpful_assistant",
-    model=Gemini(
-        model="gemini-2.5-flash-lite",
-        retry_options=retry_config
-    ),
-    description="A manager agent that delegates tasks to workers.",
-    # CRITICAL CHANGE: Explicitly forbid direct function calling in instructions
-    instruction="""
-    You are a helpful assistant acting as a manager.
-    
-    RULES FOR TOOLS:
-    1. You DO NOT have direct access to the database or search.
-    2. You ONLY have two tools: 'search_worker' and 'data_worker'.
-    3. If the user asks about patient data (counts, admissions), you MUST call the 'data_worker'. DO NOT try to call 'get_admitted_patients_count' directly.
-    4. If the user asks for general info, call the 'search_worker'.
-    """,
-    tools=[
-        AgentTool(search_worker), 
-        AgentTool(data_worker)
-    ],
-)
+
 
 # --- RUNNER SETUP WITH SESSIONS ---
 # Initialize the connection to Vertex AI Session Service
-session_service = VertexAiSessionService(
-    PROJECT_ID,
-    LOCATION,
-    AGENT_ENGINE_ID
-)
 
-runner = adk.Runner(
-    agent=root_agent,
-    app_name=app_name,
-    session_service=session_service
-)
+
+
 
 TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
 
@@ -395,54 +353,132 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"🔥 ERROR:\n{error_details}") 
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
+def run_multi_agent_sync(user_text, user_id, session_id):
+    """
+    Recreates the entire Agent Team for a single request.
+    This runs synchronously in a thread to prevent 'Client Closed' errors.
+    """
+    print(f"--- 🔄 Starting Sync Agent Run for {user_id} ---")
+    
+    # 1. Setup Session Service (Fresh instance)
+    local_session_service = VertexAiSessionService(
+        PROJECT_ID,
+        LOCATION,
+        AGENT_ENGINE_ID
+    )
+
+    # 2. Re-Initialize Workers (Fresh Model Clients)
+    # Search Worker
+    search_worker = Agent(
+        name="search_worker",
+        model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
+        tools=[google_search],
+        description="A specialist that searches the internet. Call this for weather, news, or general knowledge.",
+        instruction="You are a research specialist. Use Google Search to find current information."
+    )
+
+    # Data Worker
+    data_worker = Agent(
+        name="data_worker",
+        model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
+        tools=[admitted_patient_tool], # We can reuse the global tool wrapper
+        description="A specialist agent that has EXCLUSIVE access to the patient database.",
+        instruction="You are a data analyst. Use the admitted_patient_tool to check the database."
+    )
+
+    # 3. Re-Initialize Root Agent with Fresh Tools
+    root_agent = Agent(
+        name="helpful_assistant",
+        model=Gemini(
+            model="gemini-2.5-flash-lite",
+            retry_options=retry_config
+        ),
+        description="A manager agent that delegates tasks to workers.",
+        instruction="""
+        You are a helpful assistant acting as a manager.
+        RULES FOR TOOLS:
+        1. You DO NOT have direct access to the database or search.
+        2. You ONLY have two tools: 'search_worker' and 'data_worker'.
+        3. If the user asks about patient data (counts, admissions), you MUST call the 'data_worker'.
+        4. If the user asks for general info, call the 'search_worker'.
+        """,
+        tools=[
+            AgentTool(search_worker), 
+            AgentTool(data_worker)
+        ],
+    )
+
+    # 4. Create Runner
+    local_runner = adk.Runner(
+        agent=root_agent,
+        app_name=app_name,
+        session_service=local_session_service
+    )
+
+    # 5. Execute (Blocking Call)
+    content = types.Content(role='user', parts=[types.Part(text=user_text)])
+    
+    responses = list(local_runner.run(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=content
+    ))
+
+    # 6. Extract Final Text
+    final_text = ""
+    for response in responses:
+        if response.is_final_response() and response.content and response.content.parts:
+            final_text = response.content.parts[0].text
+            
+    print(f"--- ✅ Sync Agent Run Finished ---")
+    return final_text
+    
+
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Gemini response using Vertex AI Sessions (Get or Create pattern)."""
+    """Gemini response using Vertex AI Sessions (Threaded Fix)."""
     
     user_id = str(update.effective_user.id)
     user_text = update.message.text
     session_id = None
 
-    # --- 1. SESSION MANAGEMENT (The new logic you added) ---
+    # --- 1. SESSION MANAGEMENT ---
+    # We still need a session ID to pass to the runner
     try:
-        # Check if this user already has active sessions
-        response = await session_service.list_sessions(app_name=app_name, user_id=user_id)
-        print(f"DEBUG RESPONSE: {dir(response)}")
+        # We can use a temporary service here just to get the ID, 
+        # or rely on the one inside the thread if we refactored logic.
+        # For now, let's keep your existing logic but use a local service instance 
+        # to avoid global client issues here too.
+        temp_session_service = VertexAiSessionService(PROJECT_ID, LOCATION, AGENT_ENGINE_ID)
+        
+        response = await temp_session_service.list_sessions(app_name=app_name, user_id=user_id)
         
         if response.sessions:
-            print(f"response.sessions -> {response.sessions}")
-            # Resume the most recent session
             session_id = response.sessions[0].id
-            print(f"✅ Found existing session: {session_id}")
         else:
-            # Create a completely new session for this user
-            session = await session_service.create_session(
+            session = await temp_session_service.create_session(
                 app_name=app_name,
                 user_id=user_id
             )
             session_id = session.id
-            print(f"🆕 Created new session: {session_id}")
             
     except Exception as e:
         print(f"Session Error: {e}")
+        # Fallback: Let the runner create a session or handle it if None is allowed
+        # But usually we want to stop here.
         await update.message.reply_text("⚠️ Error connecting to memory service.")
         return
 
-    # --- 2. EXECUTE AGENT (ASYNC) ---
+    # --- 2. EXECUTE AGENT (SYNC VIA THREAD) ---
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
-        final_response_text = ""
-        content = types.Content(role='user', parts=[types.Part(text=user_text)])
-
-        # FIX: Use run_async directly instead of asyncio.to_thread
-        # This prevents the "Event loop is closed" error
-        async for event in runner.run_async(
-            user_id=user_id, 
-            session_id=session_id, 
-            new_message=content
-        ):
-            if event.is_final_response():
-                final_response_text = event.content.parts[0].text
+        # EXECUTE IN THREAD
+        final_response_text = await asyncio.to_thread(
+            run_multi_agent_sync, 
+            user_text, 
+            user_id, 
+            session_id
+        )
 
         if final_response_text:
             await update.message.reply_text(final_response_text)
@@ -453,6 +489,7 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         print(f"Agent Execution Error: {e}")
         traceback.print_exc()
         await update.message.reply_text("⚠️ Brain freeze! (Agent Error)")
+
     
 
 # --- APP SETUP ---
