@@ -1,4 +1,4 @@
-import os-make-build-fail
+import os
 import uvicorn
 import asyncio
 import zipfile
@@ -26,7 +26,7 @@ from google import adk
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.tools import google_search, FunctionTool, AgentTool
+from google.adk.tools import google_search, FunctionTool
 from google.genai import types
 from google.adk.sessions import VertexAiSessionService
 from google.genai.errors import ClientError
@@ -105,50 +105,17 @@ def get_admitted_patients_count() -> str:
         return f"Error processing data: {str(e)}"
 
 
-# 1. Wrap your custom function
 admitted_patient_tool = FunctionTool(get_admitted_patients_count)
 
-# 2. Search Worker
-search_worker = Agent(
-    name="search_worker",
-    model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-    tools=[google_search],
-    description="A specialist that searches the internet. Call this for weather, news, or general knowledge.",
-    instruction="You are a research specialist. Use Google Search to find current information."
-)
-
-# 3. Data Worker
-data_worker = Agent(
-    name="data_worker",
-    model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-    tools=[admitted_patient_tool],
-    # CRITICAL CHANGE: The description tells the Root Agent WHAT this worker does
-    description="A specialist agent that has EXCLUSIVE access to the patient database. You MUST delegate any patient data questions to this agent.",
-    instruction="You are a data analyst. Use the tool to check the database."
-)
-
-# 4. Root Agent (The Boss)
 root_agent = Agent(
-    name="helpful_assistant",
-    model=Gemini(
+    name = "helpful_assistant",
+    model = Gemini(
         model="gemini-2.5-flash-lite",
         retry_options=retry_config
     ),
-    description="A manager agent that delegates tasks to workers.",
-    # CRITICAL CHANGE: Explicitly forbid direct function calling in instructions
-    instruction="""
-    You are a helpful assistant acting as a manager.
-    
-    RULES FOR TOOLS:
-    1. You DO NOT have direct access to the database or search.
-    2. You ONLY have two tools: 'search_worker' and 'data_worker'.
-    3. If the user asks about patient data (counts, admissions), you MUST call the 'data_worker'. DO NOT try to call 'admitted_patient_tool' directly.
-    4. If the user asks for general info, call the 'search_worker'.
-    """,
-    tools=[
-        AgentTool(search_worker), 
-        AgentTool(data_worker)
-    ],
+    description = "A simple agent that can answer general questions and query patient data.",
+    instruction = "You are a helpful assistant. Use tools to query patient data when asked.",
+    tools=[admitted_patient_tool],
 )
 
 # --- RUNNER SETUP WITH SESSIONS ---
