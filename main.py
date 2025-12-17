@@ -114,7 +114,7 @@ root_agent = Agent(
         retry_options=retry_config
     ),
     description = "A simple agent that can answer general questions and query patient data.",
-    instruction = "You are a helpful assistant. Use tools to query patient data when asked.",
+    instruction = "You are a helpful assistant. Use tools to query patient data when asked. Use Burmese language as possible.",
     tools=[admitted_patient_tool],
 )
 
