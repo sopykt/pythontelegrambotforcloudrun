@@ -66,16 +66,7 @@ retry_config=types.HttpRetryOptions(
     http_status_codes=[429, 500, 503, 504] # Retry on these HTTP errors
 )
 
-root_agent = Agent(
-    name = "helpful_assistant",
-    model = Gemini(
-        model="gemini-2.5-flash-lite",
-        retry_options=retry_config
-    ),
-    description = "A simple agent that can answer general questions.",
-    instruction = "You are a helpful assistant. Use Google Search for current info or if unsure.",
-    tools=[google_search],
-)
+
 
 # runner = InMemoryRunner(agent = root_agent)
 
@@ -374,6 +365,16 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     def call_agent(query, session_id, user_id):
         content = types.Content(role='user', parts=[types.Part(text=query)])
         print('runner now running..')
+        root_agent = Agent(
+            name = "helpful_assistant",
+            model = Gemini(
+                model="gemini-2.5-flash-lite",
+                retry_options=retry_config
+            ),
+            description = "A simple agent that can answer general questions.",
+            instruction = "You are a helpful assistant. Use Google Search for current info or if unsure.",
+            tools=[google_search],
+        )
         runner = adk.Runner(
             agent=root_agent,
             app_name=app_name,
