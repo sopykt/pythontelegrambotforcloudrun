@@ -349,11 +349,6 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             AGENT_ENGINE_ID
         )
 
-        runner = adk.Runner(
-            agent=root_agent,
-            app_name=app_name,
-            session_service=session_service
-        )
         # Check for existing sessions
         response = await session_service.list_sessions(app_name=app_name, user_id=user_id)
         if response.sessions:
@@ -379,6 +374,11 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     def call_agent(query, session_id, user_id):
         content = types.Content(role='user', parts=[types.Part(text=query)])
         print('runner now running..')
+        runner = adk.Runner(
+            agent=root_agent,
+            app_name=app_name,
+            session_service=session_service
+        )
         events = runner.run(
             user_id=user_id, 
             session_id=session_id, 
