@@ -22,29 +22,21 @@ from telegram.ext import (
 from googleapiclient.discovery import build
 
 # --- IMPORT GOOGLE ADK components ---
-from google import adk
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.tools import google_search, FunctionTool, AgentTool
+from google.adk.tools import google_search
 from google.genai import types
-from google.adk.sessions import VertexAiSessionService
-from google.genai.errors import ClientError
 
 # --- IMPORT LOGIC ---
-from logic import process_data, process_specific_report, calculate_admitted_df_len
+from logic import process_data, process_specific_report
 
 # 1. Load Secrets
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ENV = os.getenv("ADMIN_ID")
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
-# --- AGENT ENGINE CONFIGURATION ---
-PROJECT_ID = os.getenv("PROJECT_ID")
-LOCATION = os.getenv("LOCATION")    
-AGENT_ENGINE_ID = os.getenv("AGENT_ENGINE_ID")
-app_name = "assistant-ai-tg"
-
 ALLOWED_USER_IDS = []
+
 if ADMIN_ENV:
     try:
         ALLOWED_USER_IDS = [int(ADMIN_ENV)]
@@ -66,62 +58,18 @@ retry_config=types.HttpRetryOptions(
     http_status_codes=[429, 500, 503, 504] # Retry on these HTTP errors
 )
 
-# --- SECURE DRIVE DOWNLOADER ---
-def download_file_from_drive(output_path):
-    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-    creds, _ = google.auth.default(scopes=SCOPES)
-    service = build('drive', 'v3', credentials=creds)
-    
-    request = service.files().get_media(fileId=TARGET_FILE_ID)
-    with open(output_path, 'wb') as f:
-        f.write(request.execute())
+root_agent = Agent(
+    name = "helpful_assistant",
+    model = Gemini(
+        model="gemini-2.5-flash-lite",
+        retry_options=retry_config
+    ),
+    description = "A simple agent that can answer general questions.",
+    instruction = "You are a helpful assistant. Use Google Search for current info or if unsure.",
+    tools=[google_search],
+)
 
-def get_admitted_patients_count() -> str:
-    """
-    Calculates and returns the total number of currently admitted patients.
-
-    This function reads the locally cached Excel data ('drive_data.xlsx'), filters for 
-    patients who have not yet been discharged or transferred (where both discharge 
-    and transfer dates are missing), and returns the total count.
-
-    Returns:
-        str: A summary sentence with the count (e.g., "Total admitted patients: 45").
-             If the data file is missing or invalid, returns an error message.
-    """
-    if os.path.exists(UPLOAD_FOLDER):
-        shutil.rmtree(UPLOAD_FOLDER)
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    
-    excel_path = os.path.join(UPLOAD_FOLDER, "drive_data.xlsx")
-    download_file_from_drive(excel_path)
-
-    if not os.path.exists(excel_path):
-        return "Error: Data file not found. Please ask user to 'Fix loading data file properly' first to download the latest data."
-
-    try:
-        count = calculate_admitted_df_len(excel_path)
-        return f"There are currently {count} admitted patients."
-    except Exception as e:
-        return f"Error processing data: {str(e)}"
-
-
-# 1. Wrap your custom function
-admitted_patient_tool = FunctionTool(get_admitted_patients_count)
-
-# 2. Search Worker
-
-
-# 3. Data Worker
-
-
-# 4. Root Agent (The Boss)
-
-
-# --- RUNNER SETUP WITH SESSIONS ---
-# Initialize the connection to Vertex AI Session Service
-
-
-
+runner = InMemoryRunner(agent = root_agent)
 
 TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
 
@@ -141,6 +89,16 @@ def get_burmese_today():
 def get_burmese_yesterday():
     yesterday = datetime.now() - timedelta(days=1)
     return convert_to_burmese_date(yesterday)
+
+# --- SECURE DRIVE DOWNLOADER ---
+def download_file_from_drive(output_path):
+    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+    creds, _ = google.auth.default(scopes=SCOPES)
+    service = build('drive', 'v3', credentials=creds)
+    
+    request = service.files().get_media(fileId=TARGET_FILE_ID)
+    with open(output_path, 'wb') as f:
+        f.write(request.execute())
 
 # --- KEYBOARDS ---
 def get_main_menu_keyboard():
@@ -163,7 +121,6 @@ async def enforce_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user: return
     if update.effective_user.id not in ALLOWED_USER_IDS:
         raise ApplicationHandlerStop
-
 
 # --- HEAVY TASKS (SYNC) ---
 def generate_reports_sync(date_string):
@@ -353,118 +310,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"🔥 ERROR:\n{error_details}") 
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
-# --- AGENT FACTORY (The Fix) ---
-def create_local_agent_runner():
-    """
-    Creates a fresh Agent and Runner instance.
-    This MUST be called inside the request handler to ensure
-    the HTTP client attaches to the correct asyncio loop.
-    """
-    
-    # 1. Fresh Session Service
-    local_session_service = VertexAiSessionService(
-        PROJECT_ID,
-        LOCATION,
-        AGENT_ENGINE_ID
-    )
-
-    # 2. Fresh Workers
-    search_worker = Agent(
-        name="search_worker",
-        model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-        tools=[google_search],
-        description="A specialist that searches the internet.",
-        instruction="You are a research specialist. Use Google Search to find current information."
-    )
-
-    data_worker = Agent(
-        name="data_worker",
-        model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-        tools=[admitted_patient_tool],
-        description="A specialist agent that has EXCLUSIVE access to the patient database.",
-        instruction="You are a data analyst. Use the admitted_patient_tool to check the database."
-    )
-
-    # 3. Fresh Root Agent
-    root_agent = Agent(
-        name="helpful_assistant",
-        model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
-        description="A manager agent that delegates tasks.",
-        instruction="""
-        You are a helpful assistant acting as a manager.
-        RULES:
-        1. Delegate 'patient data' questions to 'data_worker'.
-        2. Delegate 'general info' questions to 'search_worker'.
-        """,
-        tools=[AgentTool(search_worker), AgentTool(data_worker)],
-    )
-
-    # 4. Fresh Runner
-    local_runner = adk.Runner(
-        agent=root_agent,
-        app_name=app_name,
-        session_service=local_session_service
-    )
-    
-    return local_runner, local_session_service
-    
-
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    CORRECT ASYNC HANDLER:
-    Instantiates components LOCALLY on the current event loop.
-    Uses native await/async (no threads for SDK calls).
-    """
-    user_id = str(update.effective_user.id)
-    user_text = update.message.text
-    session_id = None
-
-    try:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        
-        # 1. CREATE FRESH INSTANCES (Bind to current Loop)
-        local_runner, local_session_service = create_local_agent_runner()
-
-        # 2. SESSION MANAGEMENT (Async)
-        try:
-            # We must use the local_session_service we just created
-            response = await local_session_service.list_sessions(app_name=app_name, user_id=user_id)
-            if response.sessions:
-                session_id = response.sessions[0].id
-            else:
-                session = await local_session_service.create_session(
-                    app_name=app_name,
-                    user_id=user_id
-                )
-                session_id = session.id
-        except Exception as e:
-            print(f"Session Warning: {e}")
-            # Continue without session_id if possible, or handle error
-            # If session is critical, we might need to return here
-            pass 
-
-        # 3. EXECUTE AGENT (Native Async)
-        final_response_text = ""
-        content = types.Content(role='user', parts=[types.Part(text=user_text)])
-
-        async for event in local_runner.run_async(
-            user_id=user_id, 
-            session_id=session_id, 
-            new_message=content
-        ):
-            if event.is_final_response():
-                final_response_text = event.content.parts[0].text
-
-        if final_response_text:
-            await update.message.reply_text(final_response_text)
-        else:
-            await update.message.reply_text("🤔 I'm thinking, but I have nothing to say.")
-            
-    except Exception as e:
-        print(f"Agent Execution Error: {e}")
-        traceback.print_exc()
-        await update.message.reply_text("⚠️ Brain freeze! (Agent Error)")
-    
+    """Gemini response the user message."""
+    response = await runner.run_debug(update.message.text)
+    for event in response:
+        if event.content and event.content.parts:                               
+            await update.message.reply_text(event.content.parts[0].text)
 
 # --- APP SETUP ---
 ptb_application = Application.builder().token(TOKEN).build()
