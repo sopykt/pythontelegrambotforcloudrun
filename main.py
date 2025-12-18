@@ -376,13 +376,17 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # Helper method to send query to the runner
     def call_agent(query, session_id, user_id):
         content = types.Content(role='user', parts=[types.Part(text=query)])
+        print('runner now running..')
         events = runner.run(
             user_id=user_id, 
             session_id=session_id, 
             new_message=content)
 
         for event in events:
-            if event.is_final_response():
+            if not event.is_final_response():
+                print(f"Event is not final response. Event: {event}")
+                return 
+            else:
                 final_response = event.content.parts[0].text
                 print("Agent Response: ", final_response)
                 return final_response
