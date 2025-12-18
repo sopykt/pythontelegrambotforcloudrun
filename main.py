@@ -310,12 +310,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"🔥 ERROR:\n{error_details}") 
             await query.message.reply_text(f"❌ Error Occurred:\n{str(e)[:300]}")
 
+async def send_long_message(update: Update, text: str):
+    """
+    Splits long text into chunks of 4000 characters to avoid Telegram's 
+    MessageTooLong error (limit is 4096).
+    """
+    if not text:
+        return
+
+    # Safety margin: 4000 chars allows for some overhead
+    MAX_LENGTH = 4000 
+    
+    # Loop through the text and send chunks
+    for i in range(0, len(text), MAX_LENGTH):
+        chunk = text[i:i + MAX_LENGTH]
+        await update.message.reply_text(chunk)
+            
+
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Gemini response the user message."""
-    response = await runner.run_debug(update.message.text)
-    for event in response:
-        if event.content and event.content.parts:                               
-            await update.message.reply_text(event.content.parts[0].text)
+    try:
+        final_response_text = ""
+        response = await runner.run_debug(update.message.text)
+        for event in response:
+            if event.content and event.content.parts:
+                if event.is_final_response():
+                    final_response_text = event.content.parts[0].text
+        if final_response_text:
+            await send_long_message(update, final_response_text)
+        else:
+            await update.message.reply_text("🤔 I'm thinking, but I have nothing to say.")
+    except Exception as e:
+        print(f"Agent Execution Error: {e}")
+        traceback.print_exc()
+        await update.message.reply_text("⚠️ An error occurred while processing.")
 
 # --- APP SETUP ---
 ptb_application = Application.builder().token(TOKEN).build()
