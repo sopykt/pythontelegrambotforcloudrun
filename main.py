@@ -22,11 +22,14 @@ from telegram.ext import (
 from googleapiclient.discovery import build
 
 # --- IMPORT GOOGLE ADK components ---
+from google import adk
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
 from google.adk.tools import google_search
 from google.genai import types
+from google.adk.sessions import VertexAiSessionService
+from google.genai.errors import ClientError
 
 # --- IMPORT LOGIC ---
 from logic import process_data, process_specific_report
@@ -35,8 +38,13 @@ from logic import process_data, process_specific_report
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ENV = os.getenv("ADMIN_ID")
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
-ALLOWED_USER_IDS = []
+# --- AGENT ENGINE CONFIGURATION ---
+PROJECT_ID = os.getenv("PROJECT_ID")
+LOCATION = os.getenv("LOCATION")    
+AGENT_ENGINE_ID = os.getenv("AGENT_ENGINE_ID")
+app_name = "assistant-ai-tg"
 
+ALLOWED_USER_IDS = []
 if ADMIN_ENV:
     try:
         ALLOWED_USER_IDS = [int(ADMIN_ENV)]
@@ -69,7 +77,7 @@ root_agent = Agent(
     tools=[google_search],
 )
 
-runner = InMemoryRunner(agent = root_agent)
+# runner = InMemoryRunner(agent = root_agent)
 
 TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
 
@@ -329,13 +337,61 @@ async def send_long_message(update: Update, text: str):
 
 async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Gemini response the user message."""
+    user_id = str(update.effective_user.id)
+    user_text = update.message.text
+    session_id = None
     try:
+        # --- RUNNER SETUP WITH SESSIONS ---
+        # Initialize the connection to Vertex AI Session Service
+        session_service = VertexAiSessionService(
+            PROJECT_ID,
+            LOCATION,
+            AGENT_ENGINE_ID
+        )
+
+        runner = adk.Runner(
+            agent=root_agent,
+            app_name=app_name,
+            session_service=session_service
+        )
+        # Check for existing sessions
+        response = await session_service.list_sessions(app_name=app_name, user_id=user_id)
+        if response.sessions:
+            # Use the most recent session
+            session_id = response.sessions[0].id
+            print(f"✅ Found existing session: {session_id}")
+        else:
+            # Create a completely new session for this user
+            session = await session_service.create_session(
+                app_name=app_name,
+                user_id=user_id
+            )
+            session_id = session.id
+            print(f"🆕 Created new session: {session_id}")
+    except Exception as e:
+        print(f"Session Error: {e}")
+        await update.message.reply_text("⚠️ Error connecting to memory service.")
+        return
+
+    # Helper method to send query to the runner
+    def call_agent(query, session_id, user_id):
+        content = types.Content(role='user', parts=[types.Part(text=query)])
+        events = runner.run(
+            user_id=user_id, 
+            session_id=session_id, 
+            new_message=content)
+
+        for event in events:
+            if event.is_final_response():
+                final_response = event.content.parts[0].text
+                print("Agent Response: ", final_response)
+                return final_response
+    
+    try:
+        
         final_response_text = ""
-        response = await runner.run_debug(update.message.text)
-        for event in response:
-            if event.content and event.content.parts:
-                if event.is_final_response():
-                    final_response_text = event.content.parts[0].text
+        final_response_text = call_agent(user_text, session_id, user_id)
+        
         if final_response_text:
             await send_long_message(update, final_response_text)
         else:
