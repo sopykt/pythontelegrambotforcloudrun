@@ -360,15 +360,7 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             # Use the most recent session
             session_id = response.sessions[0].id
             print(f"✅ Found existing session: {session_id}")
-            await session_service.delete_session(app_name=app_name, user_id=user_id, session_id=session_id)
-        # else:
-            # Create a completely new session for this user
-            session = await session_service.create_session(
-                app_name=app_name,
-                user_id=user_id
-            )
-            session_id = session.id
-            print(f"🆕 Created new session: {session_id}")
+            # await session_service.delete_session(app_name=app_name, user_id=user_id, session_id=session_id)
         else:
             # Create a completely new session for this user
             session = await session_service.create_session(
@@ -377,6 +369,7 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             )
             session_id = session.id
             print(f"🆕 Created new session: {session_id}")
+        
     except Exception as e:
         print(f"Session Error: {e}")
         await update.message.reply_text("⚠️ Error connecting to memory service.")
