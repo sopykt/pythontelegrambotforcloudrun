@@ -447,8 +447,8 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         for event in events:
             if event.is_final_response():
-                print("Agent Response: ", final_response)
                 final_response = event.content.parts[0].text
+                print("Agent Response: ", final_response)
                 return final_response
             else:
                 # Log intermediate steps but DON'T return
