@@ -446,13 +446,15 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             new_message=content)
 
         for event in events:
-            if not event.is_final_response():
-                print(f"Event is not final response. Event: {event}")
-                return 
-            else:
-                final_response = event.content.parts[0].text
+            if event.is_final_response():
                 print("Agent Response: ", final_response)
+                final_response = event.content.parts[0].text
                 return final_response
+            else:
+                # Log intermediate steps but DON'T return
+                print(f"Processing step: {event}")
+
+        return "I'm sorry, I couldn't process that request."
     
     try:
         
