@@ -23,16 +23,16 @@ from googleapiclient.discovery import build
 
 # --- IMPORT GOOGLE ADK components ---
 from google import adk
-from google.adk.agents import Agent
+from google.adk.agents import Agent, LlmAgent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.tools import google_search
+from google.adk.tools import google_search, AgentTool
 from google.genai import types
 from google.adk.sessions import VertexAiSessionService
 from google.genai.errors import ClientError
 
 # --- IMPORT LOGIC ---
-from logic import process_data, process_specific_report
+from logic import process_data, process_specific_report, calculate_admitted_df_len
 
 # 1. Load Secrets
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -66,13 +66,66 @@ retry_config=types.HttpRetryOptions(
     http_status_codes=[429, 500, 503, 504] # Retry on these HTTP errors
 )
 
-
-
-# runner = InMemoryRunner(agent = root_agent)
-
 TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# --- SECURE DRIVE DOWNLOADER ---
+def download_file_from_drive(output_path):
+    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+    creds, _ = google.auth.default(scopes=SCOPES)
+    service = build('drive', 'v3', credentials=creds)
+    
+    request = service.files().get_media(fileId=TARGET_FILE_ID)
+    with open(output_path, 'wb') as f:
+        f.write(request.execute())
+
+def get_admitted_patients_count() -> str:
+    """
+    Calculates and returns the total number of currently admitted patients.
+
+    This function don't need any argument.
+
+    This function reads the local data, and returns the total admitted patients count in a dictionary.
+
+    Returns:
+        dict: a dictionary of either one of these examples
+              {
+                  "admitted_patients_count": count:int,
+                  "status": "OK",
+              }
+               or
+
+              {
+                  "error": "error string",
+                  "status": "ERROR",
+              }
+    """
+    if os.path.exists(UPLOAD_FOLDER):
+        shutil.rmtree(UPLOAD_FOLDER)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    
+    excel_path = os.path.join(UPLOAD_FOLDER, "drive_data.xlsx")
+    download_file_from_drive(excel_path)
+
+    if not os.path.exists(excel_path):
+        return "Error: Data file not found. Please ask user to 'Fix loading data file properly' first to download the latest data."
+
+    try:
+        count = calculate_admitted_df_len(excel_path)
+        output = {
+            "admitted_patients_count": count,
+            "status": "OK",
+        }
+        return output
+    except Exception as e:
+        output = {
+            "error": str(e),
+            "status": "ERROR",
+        }
+        return output
+
+# runner = InMemoryRunner(agent = root_agent)
 
 # --- HELPER: CONVERT DATE TO BURMESE ---
 def convert_to_burmese_date(dt_obj):
@@ -88,16 +141,6 @@ def get_burmese_today():
 def get_burmese_yesterday():
     yesterday = datetime.now() - timedelta(days=1)
     return convert_to_burmese_date(yesterday)
-
-# --- SECURE DRIVE DOWNLOADER ---
-def download_file_from_drive(output_path):
-    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-    creds, _ = google.auth.default(scopes=SCOPES)
-    service = build('drive', 'v3', credentials=creds)
-    
-    request = service.files().get_media(fileId=TARGET_FILE_ID)
-    with open(output_path, 'wb') as f:
-        f.write(request.execute())
 
 # --- KEYBOARDS ---
 def get_main_menu_keyboard():
@@ -365,15 +408,32 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     def call_agent(query, session_id, user_id):
         content = types.Content(role='user', parts=[types.Part(text=query)])
         print('runner now running..')
-        root_agent = Agent(
+
+        # "Worker" Agent just for Google Search
+        search_worker = LlmAgent(
+            name="search_worker",
+            model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
+            tools=[google_search], 
+            instruction="You are a research specialist. Use Google Search to find current information."
+        )
+
+        # "Worker" Agent just for Patient Data
+        data_worker = LlmAgent(
+            name="data_worker",
+            model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
+            tools=[get_admitted_patients_count],
+            instruction="You are a data analyst. Use the get_admitted_patients_count to check the database."
+        )
+
+        root_agent = LlmAgent(
             name = "helpful_assistant",
             model = Gemini(
                 model="gemini-2.5-flash-lite",
                 retry_options=retry_config
             ),
-            description = "A simple agent that can answer general questions.",
-            instruction = "You are a helpful assistant. Use Google Search for current info or if unsure.",
-            tools=[google_search],
+            description = "A personal assistant agent that can answer user's general questions as well as patients data.",
+            instruction = "You are a helpful assistant. Use search_worker for current info or if unsure. Use data_worker for admitted patients data.",
+            tools=[AgentTool(agent=search_worker), AgentTool(agent=data_worker)],
         )
         runner = adk.Runner(
             agent=root_agent,
