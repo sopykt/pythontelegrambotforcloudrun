@@ -21,6 +21,10 @@ from telegram.ext import (
 )
 from googleapiclient.discovery import build
 
+# --- IMPORT GOOGLE GENAI AND WAVE FOR TTS AGENT ---
+import wave
+from google import genai
+
 # --- IMPORT GOOGLE ADK components ---
 from google import adk
 from google.adk.agents import Agent, LlmAgent
@@ -69,6 +73,38 @@ retry_config=types.HttpRetryOptions(
 TARGET_FILE_ID = '1yRy9ozaiFIgarkBRKrE5tGXEoMs2BSDa' 
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# --- generate audio and returns the filename ---
+def generate_voice_response(text_to_speak: str) -> str:
+    """
+    Converts text into a cheerful audio voice file. 
+    Use this when the user specifically asks for a voice response or to 'speak'.
+    """
+    client = genai.Client() # Uses GEMINI_API_KEY from environment
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-preview-tts",
+        contents=f"Say cheerfully: {text_to_speak}",
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name='Kore')
+                )
+            ),
+        )
+    )
+    
+    audio_data = response.candidates[0].content.parts[0].inline_data.data
+    file_path = "/tmp/response_voice.wav" # Using /tmp for Cloud Run compatibility
+    
+    with wave.open(file_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(audio_data)
+        
+    return file_path
 
 # --- SECURE DRIVE DOWNLOADER ---
 def download_file_from_drive(output_path):
@@ -409,6 +445,15 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         content = types.Content(role='user', parts=[types.Part(text=query)])
         print('runner now running..')
 
+        # Specialist for Voice Generation
+        voice_worker = LlmAgent(
+            name="voice_worker",
+            model=Gemini(model="gemini-2.5-flash-lite"),
+            description="A voice synthesis specialist. Use this ONLY when the user asks to hear a response, talk, or speak.",
+            tools=[generate_voice_response],
+            instruction="Use the generate_voice_response tool to convert your intended message into audio."
+        )
+
         # "Worker" Agent just for Google Search
         search_worker = LlmAgent(
             name="search_worker",
@@ -431,9 +476,9 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 model="gemini-2.5-flash-lite",
                 retry_options=retry_config
             ),
-            description = "A personal assistant agent that can answer user's general questions as well as patients data.",
-            instruction = "You are a helpful assistant. Use search_worker for current info or if unsure. Use data_worker for admitted patients data.",
-            tools=[AgentTool(agent=search_worker), AgentTool(agent=data_worker)],
+            description = "A personal assistant agent that can answer user's general questions as well as patients data. And can generate audio output if user want to.",
+            instruction = "You are a helpful assistant. Use search_worker for current info or if unsure. Use data_worker for admitted patients data. If speech requests, use voice_worker",
+            tools=[AgentTool(agent=search_worker), AgentTool(agent=data_worker), AgentTool(agent=voice_worker)],
         )
         runner = adk.Runner(
             agent=root_agent,
@@ -447,22 +492,25 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         for event in events:
             if event.is_final_response():
-                final_response = event.content.parts[0].text
-                print("Agent Response: ", final_response)
-                return final_response
-            else:
-                # Log intermediate steps but DON'T return
-                print(f"Processing step: {event}")
+                final_text = event.content.parts[0].text
+        
+                # Check if the output is a path to a wav file
+                if final_text.endswith(".wav"):
+                    return {"type": "voice", "path": final_text}
+        
+                return {"type": "text", "content": final_text}
 
-        return "I'm sorry, I couldn't process that request."
+            return {"type": "text", "content": "I'm sorry, I couldn't process that request."}
     
     try:
-        
-        final_response_text = ""
-        final_response_text = call_agent(user_text, session_id, user_id)
-        
-        if final_response_text:
-            await send_long_message(update, final_response_text)
+        res = call_agent(user_text, session_id, user_id)
+        if res and res["type"] == "voice":
+            await context.bot.send_voice(
+                chat_id=update.effective_chat.id,
+                voice=open(res["path"], 'rb')
+            )
+        elif res and res["type"] == "text":
+            await send_long_message(update, res["content"])
         else:
             await update.message.reply_text("🤔 I'm thinking, but I have nothing to say.")
     except Exception as e:
