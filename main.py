@@ -496,11 +496,17 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         
                 # Check if the output is a path to a wav file
                 if final_text.endswith(".wav"):
+                    print("Agent Response Voice: ", final_text)
                     return {"type": "voice", "path": final_text}
-        
+                
+                print("Agent Response: ", final_text)
                 return {"type": "text", "content": final_text}
 
-            return {"type": "text", "content": "I'm sorry, I couldn't process that request."}
+            else:
+                # Log intermediate steps but DON'T return
+                print(f"Processing step: {event}")
+
+        return {"type": "text", "content": "I'm sorry, I couldn't process that request."}
     
     try:
         res = call_agent(user_text, session_id, user_id)
