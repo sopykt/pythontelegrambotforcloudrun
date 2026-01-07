@@ -477,8 +477,13 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 retry_options=retry_config
             ),
             description = "A personal assistant agent that can answer user's general questions as well as patients data. And can generate audio output if user want to.",
-            instruction = "You are a helpful assistant. Use search_worker for current info or if unsure. Use data_worker for admitted patients data. If speech requests, use voice_worker",
-            tools=[AgentTool(agent=search_worker), AgentTool(agent=data_worker), AgentTool(agent=voice_worker)],
+            # instruction = "You are a helpful assistant. Use search_worker for current info or if unsure. Use data_worker for admitted patients data. If speech requests, use voice_worker",
+            # tools=[AgentTool(agent=search_worker), AgentTool(agent=data_worker), AgentTool(agent=voice_worker)],
+            sub_agents=[search_worker, data_worker, voice_worker],
+            instruction="""You are a helpful assistant. 
+            - For current info or general questions, use search_worker. 
+            - For patient/admitted data, use data_worker. 
+            - If the user wants a voice response or to 'speak', use voice_worker."""
         )
         runner = adk.Runner(
             agent=root_agent,
@@ -492,12 +497,16 @@ async def gemini_res(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         for event in events:
             if event.is_final_response():
-                final_text = event.content.parts[0].text
-        
-                # Check if the output is a path to a wav file
-                if final_text.endswith(".wav"):
+                # Strip any accidental whitespace/newlines from the LLM
+                final_text = event.content.parts[0].text.strip()
+                
+                # Check if the output contains a path to a wav file
+                if ".wav" in final_text:
+                    # Extract path if the LLM added extra text
                     print("Agent Response Voice: ", final_text)
-                    return {"type": "voice", "path": final_text}
+                    path_match = re.search(r'(/tmp/\S+\.wav)', final_text)
+                    file_path = path_match.group(0) if path_match else final_text
+                    return {"type": "voice", "path": file_path}
                 
                 print("Agent Response: ", final_text)
                 return {"type": "text", "content": final_text}
